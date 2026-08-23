@@ -1,0 +1,15 @@
+version: 2
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "go"
+
+  # NOTE: GitHub Actions 的 golangci-lint 版本（with: version）由 Renovate
+  # （renovate.json 的 regexManagers）统一自动升级，故此处不再启用 github-actions，
+  # 以免重复 PR。
+

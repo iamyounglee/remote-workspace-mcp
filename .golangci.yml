@@ -1,0 +1,79 @@
+version: "2"
+
+run:
+  tests: true
+
+linters:
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - ineffassign
+    - unused
+    - misspell
+    - unconvert
+    - gocritic
+    - gosec
+    - bodyclose
+    - nakedret
+    - wrapcheck
+    - forbidigo
+  settings:
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+      disabled-checks:
+        - rangeValCopy
+        - singleCaseSwitch
+        # 以下为纯风格检查，修复成本（改动函数签名/命名）高于收益，且易引入回归。
+        - hugeParam
+        - paramTypeCombine
+        - unnamedResult
+        - httpNoBody
+        - builtinShadow
+    forbidigo:
+      forbid:
+        - pattern: '^"0\.1\.0"$'
+          msg: "版本号应通过 -ldflags 注入，禁止硬编码"
+    errcheck:
+      # 清理类调用（关闭/删除临时资源）失败通常不可恢复也无需上报，统一忽略其返回值。
+      # 条目为精确符号名匹配（如 os.Remove、(*os.File).Close）。
+      exclude-functions:
+        - os.Remove
+        - os.RemoveAll
+        - '(*os.File).Close'
+        - '(*compress/gzip.Reader).Close'
+        - '(*compress/gzip.Writer).Close'
+        - '(*archive/tar.Writer).Close'
+    wrapcheck:
+      # 标准库与本项目 internal 包的错误无需逐层 wrap，仅在引入真正第三方外部依赖时才有意义。
+      # v2 中对应键为 ignore-package-globs（glob 匹配被调用函数所属包的导入路径）。
+      ignore-package-globs:
+        - fmt
+        - errors
+        - os*
+        - io*
+        - net*
+        - encoding*
+        - context
+        - bytes
+        - path*
+        - sort
+        - hash*
+        - flag
+        - github.com/iamyounglee/remote-workspace-mcp*
+  exclusions:
+    rules:
+      # 测试文件中允许忽略某些检查
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+          - wrapcheck
+      # bash 执行、文件读写、路径遍历是受控核心功能（输入经 workspace.Resolver 校验），
+      # 这些 gosec 告警为设计内行为，非真实漏洞。
+      - linters:
+          - gosec
+        text: G204|G304|G703

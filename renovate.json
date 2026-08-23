@@ -1,0 +1,22 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "labels": [
+    "dependencies"
+  ],
+  "regexManagers": [
+    {
+      "fileMatch": [
+        "\\.github/workflows/[^/]+\\.ya?ml$"
+      ],
+      "matchStrings": [
+        "golangci/golangci-lint-action[^\\n]*\\n\\s+with:\\n(?:\\s+[^\\n]+\\n)*?\\s+version:\\s*[\"']?(?<currentValue>[^\"']+)[\"']?"
+      ],
+      "depNameTemplate": "golangci/golangci-lint",
+      "datasourceTemplate": "go",
+      "versioningTemplate": "semver"
+    }
+  ]
+}

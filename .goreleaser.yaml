@@ -1,0 +1,76 @@
+# GoReleaser 配置
+# 文档：https://goreleaser.com
+#
+# 版本号注入：release 时通过 -ldflags 将 git tag 写入
+#   github.com/iamyounglee/remote-workspace-mcp/internal/mcpserver.Version
+
+version: 2
+
+project_name: remote-workspace-mcpd
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: remote-workspace-mcpd
+    main: ./cmd/remote-workspace-mcpd
+    binary: remote-workspace-mcpd
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w -X github.com/iamyounglee/remote-workspace-mcp/internal/mcpserver.Version={{ .Version }}
+
+archives:
+  - id: default
+    builds:
+      - remote-workspace-mcpd
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE
+      - README.md
+      - config.example.yaml
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+  groups:
+    - title: "🚀 Features"
+      regexp: "^.*?feat(\\(.*\\))?:.+$</regexp>"
+      order: 0
+    - title: "🐛 Bug Fixes"
+      regexp: "^.*?fix(\\(.*\\))?:.+$</regexp>"
+      order: 1
+    - title: "📦 Other Changes"
+      order: 999
+
+release:
+  github:
+    owner: iamyounglee
+    name: remote-workspace-mcp
+  draft: false
+  prerelease: auto

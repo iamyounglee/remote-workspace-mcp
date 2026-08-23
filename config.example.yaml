@@ -1,0 +1,54 @@
+server:
+  name: remote-workspace-mcpd
+  listen: 0.0.0.0:8080
+  mcp_path: /mcp
+  state_dir: ./state
+
+auth:
+  token_file: ./state/access-token
+
+workspace:
+  root: /data/projects/project-a
+
+paths:
+  readable:
+    - /data/shared/docs
+    - /data/shared/config
+  writable:
+    - /data/shared/generated
+
+files:
+  max_read_bytes: 1048576
+  max_write_bytes: 10485760
+  max_result_bytes: 1048576
+  max_upload_bytes: 104857600
+  max_download_bytes: 1073741824
+  max_archive_entries: 10000
+  max_extracted_bytes: 1073741824
+  max_sync_manifest_bytes: 10485760
+  create_parent_directories: true
+  ignore_directories:
+    - .git
+    - node_modules
+    - vendor
+    - dist
+
+bash:
+  enabled: true
+  timeout_seconds: 30
+  max_output_bytes: 1048576
+  max_concurrent: 4
+  sandbox:
+    mode: none
+    require: false
+    allow_network: false
+
+logging:
+  level: info
+  file: ./logs/remote-workspace-mcpd.log
+  max_size_mb: 20
+  max_files: 5
+  audit_enabled: true
+  log_file_content: false
+  log_command_output: false
+  redact_authorization: true
