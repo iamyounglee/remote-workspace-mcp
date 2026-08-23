@@ -1,0 +1,21 @@
+# 默认负责人
+
+*       @iamyounglee
+
+# 核心服务与命令入口
+/cmd/                       @iamyounglee
+/internal/mcpserver/        @iamyounglee
+/internal/auth/             @iamyounglee
+
+# 配置与路径安全
+/internal/config/           @iamyounglee
+/internal/workspace/        @iamyounglee
+
+# 文档
+/docs/                      @iamyounglee
+/README.md                  @iamyounglee
+
+# 发布与 CI
+/.github/                   @iamyounglee
+/.goreleaser.yaml           @iamyounglee
+/Makefile                   @iamyounglee

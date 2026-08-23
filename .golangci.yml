@@ -1,0 +1,49 @@
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - gofmt
+    - goimports
+    - govet
+    - errcheck
+    - staticcheck
+    - ineffassign
+    - unused
+    - misspell
+    - unconvert
+    - gocritic
+    - gosec
+    - bodyclose
+    - nakedret
+    - wrapcheck
+    - forbidigo
+
+issues:
+  exclude-rules:
+    # 测试文件中允许忽略某些检查
+    - path: _test\.go
+      linters:
+        - gosec
+        - errcheck
+        - wrapcheck
+  max-same-issues: 0
+  max-issues-per-linter: 0
+
+linters-settings:
+  goimports:
+    local-prefixes: github.com/iamyounglee/remote-workspace-mcp
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+    disabled-checks:
+      - rangeValCopy
+      - singleCaseSwitch
+  forbidigo:
+    forbid:
+      # 禁止在代码中硬编码版本号
+      - pattern: '^"0\.1\.0"$'
+        msg: "版本号应通过 -ldflags 注入，禁止硬编码"
