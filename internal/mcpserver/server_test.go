@@ -327,7 +327,7 @@ func testServer(t *testing.T) (*Server, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(cfg, resolver, store), store.Token()
+	return New(cfg, resolver, store, nil, nil), store.Token()
 }
 
 // rpcPost 向测试服务发送 JSON-RPC 请求并返回记录的响应。

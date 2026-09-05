@@ -127,6 +127,9 @@ func (s *Server) bashCommand(ctx context.Context, cwd string, argv []string) (*e
 	// 基础上进一步裁剪/绑定文件系统视图。
 	cmd.Env = os.Environ()
 	cmd.WaitDelay = bashWaitDelay
+	// 将命令放入独立进程组，超时/取消时 kill 整个进程组，避免 bash -c
+	// 派生的子进程（管道、后台任务）在 bash 被 SIGKILL 后成为孤儿继续运行。
+	setProcessGroup(cmd)
 	if s.cfg.Bash.Sandbox.Mode != "bubblewrap" {
 		return cmd, nil
 	}
@@ -153,6 +156,8 @@ func (s *Server) bashCommand(ctx context.Context, cwd string, argv []string) (*e
 	args := s.bubblewrapArgs(cwd, argv)
 	bcmd := exec.CommandContext(ctx, bwrap, args...)
 	bcmd.WaitDelay = bashWaitDelay
+	// 与上面非沙箱命令一致：超时/取消时 kill 进程组，清理 bwrap 及其子进程。
+	setProcessGroup(bcmd)
 	return bcmd, nil
 }
 
@@ -234,3 +239,5 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 
 // String 返回限长缓冲区当前保存的文本。
 func (b *limitedBuffer) String() string { return b.buf.String() }
+
+

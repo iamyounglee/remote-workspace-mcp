@@ -27,7 +27,7 @@
 
 ### 连接与生命周期
 
-MCP 端点默认为 `POST /mcp`，所有 MCP 请求都需要携带：
+MCP 端点默认为 `POST /mcp`（若配置了 `server.tls` 则以 HTTPS 提供，Bearer Token 经 TLS 加密传输），所有 MCP 请求都需要携带：
 
 ```http
 Authorization: Bearer <token>
@@ -274,3 +274,9 @@ GET /readyz
 ```
 
 这两个接口不要求 Token，只表示进程和路由已启动，不执行 Workspace、磁盘或下游依赖的深度检查。
+
+## 审计
+
+当 `logging.audit_enabled` 为 `true` 时，每次工具调用与文件 / 目录 / 同步传输都会向 `logging.file` 写入一条 `audit=true` 的审计记录，字段包括：`op`（操作类型）、`target`（操作目标）、`outcome`（success/failure）、`duration_ms`、`client_ip` 与失败时的 `reason`。命令内容会进入审计并统一截断至 512 字节；文件内容不进入审计。审计失败不影响工具执行。
+
+若配置了 `server.trusted_proxies`，审计在请求来自受信任代理时才采信 `X-Forwarded-For` 中的客户端 IP，否则使用对端 IP。鉴权失败等安全事件始终以 WARN 级别记录，不进入审计。

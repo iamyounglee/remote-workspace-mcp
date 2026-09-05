@@ -39,6 +39,9 @@
 - **增量同步**：基于 manifest 与 SHA-256 的差异同步 `POST /sync/plan`、`PUT /sync/apply`。
 - **受控命令执行**：`bash` 工具可开关（`enabled`），命令统一经 `bash -c` 执行（支持完整 Shell 语法），并可选 Bubblewrap 沙箱（`bash.sandbox.mode: none|bubblewrap`）做文件系统与网络隔离。
 - **资源限制与健康检查**：文件大小、超时、并发限制；`GET /healthz`、`GET /readyz`。
+- **工具调用审计**：`logging.audit_enabled` 开启后，每次工具调用与文件 / 目录 / 同步传输都会写入审计记录，含操作类型、目标、结果、耗时、客户端 IP 与失败原因，命令内容统一截断至 512 字节。
+- **客户端 IP 归因**：审计记录客户端 IP，并通过 `server.trusted_proxies` 在反向代理场景下安全采信 `X-Forwarded-For`。
+- **可选 TLS 加密传输**：配置 `server.tls.cert_file` / `key_file` 后仅以 TLS 监听，支持证书定时热加载，无需重启进程。
 
 ## 推荐使用场景
 

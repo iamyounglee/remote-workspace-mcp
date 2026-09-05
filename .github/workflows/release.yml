@@ -30,8 +30,8 @@ jobs:
         with:
           distribution: goreleaser
           version: latest
-          args: release --clean
+          # 使用随版本维护的 Release Notes（docs/release-notes/<tag>.md）作为发布说明，
+          # 替代 GoReleaser 基于 commit 自动生成的 changelog。
+          args: release --clean --release-notes=docs/release-notes/${{ github.ref_name }}.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 若需要自动生成基于 Conventional Commits 的 Release Notes：
-          # GORELEASER_CURRENT_TAG 由 action 自动注入

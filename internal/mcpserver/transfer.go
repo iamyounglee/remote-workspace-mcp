@@ -13,27 +13,39 @@ import (
 	"strings"
 	"time"
 
+	"github.com/iamyounglee/remote-workspace-mcp/internal/audit"
 	"github.com/iamyounglee/remote-workspace-mcp/internal/auth"
 	"github.com/iamyounglee/remote-workspace-mcp/internal/workspace"
 )
 
 // transferHTTP 校验令牌并将传输或同步请求路由到对应处理器。
+// 审计以 defer 形式覆盖本函数全部返回路径（鉴权失败、方法不允许、业务失败等）。
 func (s *Server) transferHTTP(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	op := transferOperation(r.URL.Path, r.Method)
+	target := r.URL.Query().Get("path")
 	if token, ok := auth.Bearer(r.Header.Get("Authorization")); !ok || !s.tokens.Validate(token) {
+		s.auditHTTP(r, "auth:unauthorized", target, http.StatusUnauthorized, time.Since(start))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	// 鉴权通过后注入客户端 IP，供审计埋点取用。
+	r = r.WithContext(audit.WithClientIP(r.Context(), s.ips.ClientIP(r)))
 	// 限制请求体读取量，防止超大上传耗尽内存。下载(GET)无 body，不受影响。
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.Files.MaxUploadBytes)
+	rec := &statusRecorder{ResponseWriter: w, code: http.StatusOK}
+	defer func() {
+		s.auditHTTP(r, op, target, rec.code, time.Since(start))
+	}()
 	switch r.URL.Path {
 	case "/files":
-		s.fileTransfer(w, r)
+		s.fileTransfer(rec, r)
 	case "/directories":
-		s.directoryTransfer(w, r)
+		s.directoryTransfer(rec, r)
 	case "/sync/plan", "/sync/apply":
-		s.syncHTTP(w, r)
+		s.syncHTTP(rec, r)
 	default:
-		http.NotFound(w, r)
+		http.NotFound(rec, r)
 	}
 }
 

@@ -8,13 +8,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"hash/fnv"
 	"io"
 	"net/http"
 	"path/filepath"
 	"sort"
 	"sync"
+	"time"
 
+	"github.com/iamyounglee/remote-workspace-mcp/internal/audit"
 	"github.com/iamyounglee/remote-workspace-mcp/internal/auth"
 	"github.com/iamyounglee/remote-workspace-mcp/internal/config"
 	"github.com/iamyounglee/remote-workspace-mcp/internal/workspace"
@@ -36,7 +39,11 @@ type Server struct {
 	cfg      config.Config
 	resolver *workspace.Resolver
 	tokens   *auth.Store
-	bashSem  chan struct{}
+	// recorder 记录操作审计；为空实现时不产生任何审计记录。
+	recorder audit.Recorder
+	// ips 解析审计使用的客户端 IP。
+	ips     *audit.IPResolver
+	bashSem chan struct{}
 	// fileMu 为按路径分片的互斥锁，保证同一文件编辑互斥、不同文件可并行。
 	// 取代原先全局串行化的 mutationMu。
 	// 注意：bash 与文件写之间不再加互斥锁。bash 执行无法预知其会修改哪些文件，
@@ -50,9 +57,16 @@ type Server struct {
 	tools     []map[string]any
 }
 
-// New 根据配置、工作区解析器和令牌存储创建 MCP 服务。
-func New(cfg config.Config, resolver *workspace.Resolver, tokens *auth.Store) *Server {
-	return &Server{cfg: cfg, resolver: resolver, tokens: tokens, bashSem: make(chan struct{}, cfg.Bash.MaxConcurrent)}
+// New 根据配置、工作区解析器、令牌存储、审计记录器与客户端 IP 解析器创建 MCP 服务。
+// recorder 为 nil 时使用空实现（不审计）；ips 为 nil 时使用零值解析器（始终取对端 IP）。
+func New(cfg config.Config, resolver *workspace.Resolver, tokens *auth.Store, recorder audit.Recorder, ips *audit.IPResolver) *Server {
+	if recorder == nil {
+		recorder = audit.Noop()
+	}
+	if ips == nil {
+		ips = &audit.IPResolver{}
+	}
+	return &Server{cfg: cfg, resolver: resolver, tokens: tokens, recorder: recorder, ips: ips, bashSem: make(chan struct{}, cfg.Bash.MaxConcurrent)}
 }
 
 // lockFiles 按分片索引去重并升序取分片锁，避免同一请求对同一分片重复加锁（自死锁），
@@ -105,9 +119,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if token, ok := auth.Bearer(r.Header.Get("Authorization")); !ok || !s.tokens.Validate(token) {
+		s.auditHTTP(r, "auth:unauthorized", "", http.StatusUnauthorized, 0)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	// 将客户端 IP 注入请求上下文，供审计埋点取用。
+	// 仅在鉴权通过后注入：未授权请求不进入业务链路，无需归因。
+	r = r.WithContext(audit.WithClientIP(r.Context(), s.ips.ClientIP(r)))
 	switch r.Method {
 	case http.MethodPost:
 		s.post(w, r)
@@ -119,6 +137,79 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Allow", "GET, POST, DELETE")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// statusRecorder 包装 http.ResponseWriter 以捕获响应状态码，供审计记录操作结果。
+// 未显式调用 WriteHeader 时按 200 计，与 net/http 的默认行为保持一致。
+type statusRecorder struct {
+	http.ResponseWriter
+	code int
+}
+
+// WriteHeader 记录状态码后透传给底层 ResponseWriter。
+func (sr *statusRecorder) WriteHeader(code int) {
+	sr.code = code
+	sr.ResponseWriter.WriteHeader(code)
+}
+
+// clientIP 取审计使用的客户端 IP：优先取请求上下文中已解析的值，
+// 缺失时（如鉴权失败等尚未注入上下文的路径）即时解析。
+func (s *Server) clientIP(r *http.Request) string {
+	if ip := audit.ClientIPFrom(r.Context()); ip != "" {
+		return ip
+	}
+	return s.ips.ClientIP(r)
+}
+
+// auditHTTP 记录一次 HTTP 接口调用的审计。
+// 成败由响应状态码判定：4xx/5xx 视为失败，失败原因取状态码文本。
+func (s *Server) auditHTTP(r *http.Request, op, target string, status int, d time.Duration) {
+	if s.recorder == nil || !s.recorder.Enabled() {
+		return
+	}
+	outcome := audit.OutcomeSuccess
+	reason := ""
+	if status >= 400 {
+		outcome = audit.OutcomeFailure
+		reason = http.StatusText(status)
+		if reason == "" {
+			reason = fmt.Sprintf("http %d", status)
+		}
+	}
+	s.recorder.Record(audit.Event{
+		ClientIP:  s.clientIP(r),
+		Operation: op,
+		Target:    target,
+		Outcome:   outcome,
+		Reason:    reason,
+		Duration:  d,
+		Detail:    map[string]any{"status": status, "method": r.Method},
+	})
+}
+
+// transferOperation 根据请求路径与方法返回审计操作标识。
+func transferOperation(path, method string) string {
+	switch path {
+	case "/files":
+		if method == http.MethodPut {
+			return "http:files:upload"
+		}
+		if method == http.MethodGet {
+			return "http:files:download"
+		}
+	case "/directories":
+		if method == http.MethodPut {
+			return "http:directories:upload"
+		}
+		if method == http.MethodGet {
+			return "http:directories:download"
+		}
+	case "/sync/plan":
+		return "http:sync:plan"
+	case "/sync/apply":
+		return "http:sync:apply"
+	}
+	return "http:unknown"
 }
 
 // post 处理 MCP JSON-RPC 请求。本服务为无状态模式，不维护会话。

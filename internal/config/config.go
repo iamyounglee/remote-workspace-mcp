@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/iamyounglee/remote-workspace-mcp/internal/audit"
 	"gopkg.in/yaml.v3"
 )
 
@@ -24,12 +25,25 @@ type Config struct {
 	Logging   LoggingConfig   `yaml:"logging"`
 }
 
-// ServerConfig 定义服务监听、路由和状态目录配置
+// ServerConfig 定义服务监听、路由、状态目录与 TLS 配置
 type ServerConfig struct {
 	Name     string `yaml:"name"`
 	Listen   string `yaml:"listen"`
 	MCPPath  string `yaml:"mcp_path"`
 	StateDir string `yaml:"state_dir"`
+	// TrustedProxies 为受信任代理的 IP 或 CIDR 列表。
+	// 仅当请求来自这些来源时，审计才采信 X-Forwarded-For 中的客户端 IP。
+	// 留空表示不信任任何代理，审计一律使用对端 IP。
+	TrustedProxies []string `yaml:"trusted_proxies"`
+	// TLS 为用户自备证书文件路径；配置后即仅以 TLS 监听，不再提供明文端口。
+	TLS TLSConfig `yaml:"tls"`
+}
+
+// TLSConfig 定义用户自备证书文件（cert_file、key_file）的路径。
+// 两者必须同时配置；配置后服务仅以 TLS 监听，且证书支持热加载。
+type TLSConfig struct {
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
 }
 
 // AuthConfig 定义访问令牌文件配置
@@ -78,16 +92,13 @@ type SandboxConfig struct {
 	AllowNetwork bool   `yaml:"allow_network"`
 }
 
-// LoggingConfig 定义日志级别、文件位置、审计和脱敏选项
+// LoggingConfig 定义日志级别、文件位置与审计开关
 type LoggingConfig struct {
-	Level               string `yaml:"level"`
-	File                string `yaml:"file"`
-	MaxSizeMB           int64  `yaml:"max_size_mb"`
-	MaxFiles            int    `yaml:"max_files"`
-	AuditEnabled        bool   `yaml:"audit_enabled"`
-	LogFileContent      bool   `yaml:"log_file_content"`
-	LogCommandOutput    bool   `yaml:"log_command_output"`
-	RedactAuthorization bool   `yaml:"redact_authorization"`
+	Level        string `yaml:"level"`
+	File         string `yaml:"file"`
+	MaxSizeMB    int64  `yaml:"max_size_mb"`
+	MaxFiles     int    `yaml:"max_files"`
+	AuditEnabled bool   `yaml:"audit_enabled"`
 }
 
 // Defaults 返回一份包含默认值的完整配置。
@@ -106,7 +117,7 @@ func Defaults() Config {
 			MaxOutputBytes: 1 << 20, MaxConcurrent: 4,
 			Sandbox: SandboxConfig{Mode: "none", Require: false, AllowNetwork: false},
 		},
-		Logging: LoggingConfig{Level: "info", File: "./logs/remote-workspace-mcpd.log", MaxSizeMB: 20, MaxFiles: 5, AuditEnabled: true, RedactAuthorization: true},
+		Logging: LoggingConfig{Level: "info", File: "./logs/remote-workspace-mcpd.log", MaxSizeMB: 20, MaxFiles: 5, AuditEnabled: false},
 	}
 }
 
@@ -160,6 +171,9 @@ func Validate(cfg *Config) error {
 	if cfg.Server.MCPPath == "" || cfg.Server.MCPPath[0] != '/' {
 		return fmt.Errorf("server.mcp_path must start with /")
 	}
+	if _, err := audit.NewIPResolver(cfg.Server.TrustedProxies); err != nil {
+		return fmt.Errorf("server.trusted_proxies: %w", err)
+	}
 	if cfg.Bash.Sandbox.Mode != "none" && cfg.Bash.Sandbox.Mode != "bubblewrap" {
 		return fmt.Errorf("bash.sandbox.mode must be none or bubblewrap")
 	}
@@ -211,6 +225,12 @@ func Validate(cfg *Config) error {
 		cfg.Paths.Writable[i], err = filepath.Abs(cfg.Paths.Writable[i])
 		if err != nil {
 			return fmt.Errorf("paths.writable: %w", err)
+		}
+	}
+	// 启用 TLS 时 cert_file 与 key_file 必须成对配置；启用后服务不再提供明文端口。
+	if cfg.Server.TLS.CertFile != "" || cfg.Server.TLS.KeyFile != "" {
+		if cfg.Server.TLS.CertFile == "" || cfg.Server.TLS.KeyFile == "" {
+			return fmt.Errorf("server.tls.cert_file and server.tls.key_file must be set together")
 		}
 	}
 	return nil

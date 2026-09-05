@@ -4,14 +4,14 @@
 
 ## 安全边界
 
-- 静态 Token 在 HTTP 上传输时不加密，只应在可信内网中使用。
+- 静态 Token 在 HTTP 上传输时不加密，只应在可信内网中使用；生产环境应启用 `server.tls` 以 TLS 加密传输。
 - Token 是服务级权限，不区分不同 Agent 或用户。
 - Workspace 默认读写；额外绝对路径必须进入只读或可写白名单。
 - 文件工具执行规范路径和符号链接检查。
 - `bash.sandbox.mode: none` 时，Bash 可以访问服务运行用户有权限访问的其他路径。
 - 本服务不做命令级白/黑名单，安全边界由 Bubblewrap 沙箱与最小权限运行用户构成；应配合非特权用户、cgroup、防火墙等补充控制。
 - Bubblewrap 主要提供文件系统和可选网络隔离，不替代非特权用户、cgroup、防火墙、seccomp 或主机加固。
-- `logging.*` 目前是预留字段，不能视为完整审计实现。
+- `logging.audit_enabled` 开启后提供工具调用与传输审计（含客户端 IP 与失败原因）；鉴权失败等安全事件始终以 WARN 记录，不受该开关控制；审计输出到 `logging.file`。
 
 ## 运维建议
 
@@ -23,6 +23,8 @@
 - 用主机防火墙只允许可信 Agent 来源访问服务端口。
 - Token 轮换后立即更新 Agent Secret。
 - 使用 systemd 配置自动重启、文件描述符限制、cgroup 资源限制和日志收集。
+- 启用 `server.tls.cert_file` / `key_file` 以 TLS 加密传输；证书支持定时热加载，替换证书文件后无需重启进程。
+- 通过 `logging.audit_enabled: true` 开启工具调用与传输审计，并定期归档 `logging.file` 以满足追溯需求。
 
 ## 支持的运行平台
 

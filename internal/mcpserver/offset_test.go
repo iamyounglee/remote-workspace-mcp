@@ -32,7 +32,7 @@ func utf8Server(t *testing.T) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(cfg, resolver, store)
+	return New(cfg, resolver, store, nil, nil)
 }
 
 // TestReadOffsetIsLineNumberWithMultibyte 验证 read 的 offset/limit 是 1-based 行号，

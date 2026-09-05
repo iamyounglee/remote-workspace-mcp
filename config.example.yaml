@@ -3,6 +3,10 @@ server:
   listen: 0.0.0.0:8080
   mcp_path: /mcp
   state_dir: ./state
+  trusted_proxies: []
+  tls:
+    cert_file: ""
+    key_file: ""
 
 auth:
   token_file: ./state/access-token
@@ -49,6 +53,3 @@ logging:
   max_size_mb: 20
   max_files: 5
   audit_enabled: true
-  log_file_content: false
-  log_command_output: false
-  redact_authorization: true

@@ -7,39 +7,59 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
+	"github.com/iamyounglee/remote-workspace-mcp/internal/audit"
 	"github.com/iamyounglee/remote-workspace-mcp/internal/workspace"
 )
 
 // callTool 解析工具调用参数并执行对应的工作区操作。
-func (s *Server) callTool(ctx context.Context, name string, raw json.RawMessage) (map[string]any, error) {
-	slog.Info("mcp tool call", "tool", name)
+// 审计埋点以 defer 形式覆盖本函数全部返回路径（含未知工具与结果超限）。
+func (s *Server) callTool(ctx context.Context, name string, raw json.RawMessage) (_ map[string]any, retErr error) {
+	start := time.Now()
+	// toolErr 记录工具自身的业务错误，retErr 记录序列化或超限等协议级错误。
+	// 二者必须区分：业务失败会被转换为 isError 结果而非以 error 返回。
+	var toolErr error
+	defer func() {
+		if r := recover(); r != nil {
+			// 工具实现中的意外 panic 不应导致请求/服务崩溃：此处 recover 并转为协议级错误，
+			// 同时审计记为失败（reason 非空）。
+			retErr = fmt.Errorf("tool %q panicked: %v", name, r)
+			slog.Error("tool call panicked", "tool", name, "panic", r)
+		}
+		reason := ""
+		if toolErr != nil {
+			reason = toolErr.Error()
+		} else if retErr != nil {
+			reason = retErr.Error()
+		}
+		s.auditToolCall(ctx, name, raw, reason, time.Since(start))
+	}()
 	var result any
-	var err error
 	switch name {
 	case "read":
-		result, err = s.read(raw)
+		result, toolErr = s.read(raw)
 	case "write":
-		result, err = s.write(raw)
+		result, toolErr = s.write(raw)
 	case "edit":
-		result, err = s.edit(raw)
+		result, toolErr = s.edit(raw)
 	case "apply_patch":
-		result, err = s.applyPatch(raw)
+		result, toolErr = s.applyPatch(raw)
 	case "grep":
-		result, err = s.grep(ctx, raw)
+		result, toolErr = s.grep(ctx, raw)
 	case "glob":
-		result, err = s.glob(ctx, raw)
+		result, toolErr = s.glob(ctx, raw)
 	case "list":
-		result, err = s.list(ctx, raw)
+		result, toolErr = s.list(ctx, raw)
 	case "bash":
-		result, err = s.bash(ctx, raw)
+		result, toolErr = s.bash(ctx, raw)
 	case "describe_transfer_endpoints":
-		result, err = s.describeTransferEndpoints(raw)
+		result, toolErr = s.describeTransferEndpoints(raw)
 	default:
 		return nil, fmt.Errorf("unknown tool %q", name)
 	}
-	if err != nil {
-		return toolError(err), nil
+	if toolErr != nil {
+		return toolError(toolErr), nil
 	}
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -51,6 +71,42 @@ func (s *Server) callTool(ctx context.Context, name string, raw json.RawMessage)
 		return nil, fmt.Errorf("tool result exceeds max_result_bytes (%d)", s.cfg.Files.MaxResultBytes)
 	}
 	return map[string]any{"content": []map[string]any{{"type": "text", "text": string(data)}}, "isError": false}, nil
+}
+
+// auditToolCall 记录一次 MCP 工具调用的审计。reason 为空表示成功。
+// 埋点位置在 callTool 内，是全部工具调用的必经之路，故不存在漏记可能。
+func (s *Server) auditToolCall(ctx context.Context, name string, raw json.RawMessage, reason string, d time.Duration) {
+	if s.recorder == nil || !s.recorder.Enabled() {
+		return
+	}
+	outcome := audit.OutcomeSuccess
+	if reason != "" {
+		outcome = audit.OutcomeFailure
+	}
+	s.recorder.Record(audit.Event{
+		ClientIP:  audit.ClientIPFrom(ctx),
+		Operation: "tool:" + name,
+		Target:    toolTarget(raw),
+		Outcome:   outcome,
+		Reason:    reason,
+		Duration:  d,
+	})
+}
+
+// toolTarget 从工具参数中提取审计目标（路径或命令）。
+// 各工具参数结构不同，此处只提取通用字段；取不到时返回空字符串。
+func toolTarget(raw json.RawMessage) string {
+	var args struct {
+		Path    string `json:"path"`
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return ""
+	}
+	if args.Path != "" {
+		return args.Path
+	}
+	return args.Command
 }
 
 // toolError 将工具执行错误转换为 MCP 工具错误结果。

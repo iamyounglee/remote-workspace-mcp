@@ -4,16 +4,20 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/iamyounglee/remote-workspace-mcp/internal/audit"
 	"github.com/iamyounglee/remote-workspace-mcp/internal/auth"
+	"github.com/iamyounglee/remote-workspace-mcp/internal/certs"
 	"github.com/iamyounglee/remote-workspace-mcp/internal/config"
 	"github.com/iamyounglee/remote-workspace-mcp/internal/logging"
 	"github.com/iamyounglee/remote-workspace-mcp/internal/mcpserver"
@@ -104,7 +108,14 @@ func serve(args []string) error {
 	defer close(stopWatch)
 	go store.Watch(stopWatch, time.Second)
 
-	mcp := mcpserver.New(cfg, resolver, store)
+	// 受信任代理来自 server.trusted_proxies，已在配置校验阶段验证合法性；
+	// 未配置时表示不信任任何代理，审计一律使用对端 IP。
+	ips, err := audit.NewIPResolver(cfg.Server.TrustedProxies)
+	if err != nil {
+		return err
+	}
+	recorder := audit.NewRecorder(slog.Default(), audit.Options{Enabled: cfg.Logging.AuditEnabled})
+	mcp := mcpserver.New(cfg, resolver, store, recorder, ips)
 	mux := http.NewServeMux()
 	mux.Handle(cfg.Server.MCPPath, mcp)
 	mux.Handle("/files", mcp)
@@ -129,10 +140,35 @@ func serve(args []string) error {
 		IdleTimeout:       2 * time.Minute,
 		MaxHeaderBytes:    1 << 20,
 	}
+
+	// 启用 TLS 时，服务仅以 TLS 监听，不再提供明文端口（见配置校验与文档）。
+	// 证书来自用户自备文件，并通过 Watch 定时热加载，无需重启进程。
+	var tlsConfig *tls.Config
+	if cfg.Server.TLS.CertFile != "" {
+		cr, cerr := certs.New(cfg.Server.TLS.CertFile, cfg.Server.TLS.KeyFile)
+		if cerr != nil {
+			return fmt.Errorf("load tls certificate: %w", cerr)
+		}
+		stopCertWatch := make(chan struct{})
+		defer close(stopCertWatch)
+		go cr.Watch(stopCertWatch, time.Second)
+		tlsConfig = &tls.Config{GetCertificate: cr.GetCertificate, MinVersion: tls.VersionTLS12}
+	}
+
+	ln, err := net.Listen("tcp", cfg.Server.Listen)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", cfg.Server.Listen, err)
+	}
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("remote-workspace-mcp gateway started", "listen", cfg.Server.Listen, "path", cfg.Server.MCPPath, "token_fingerprint", store.Fingerprint())
-		errCh <- httpServer.ListenAndServe()
+		if tlsConfig != nil {
+			httpServer.TLSConfig = tlsConfig
+			slog.Info("remote-workspace-mcp gateway started", "tls", true, "listen", cfg.Server.Listen, "path", cfg.Server.MCPPath, "token_fingerprint", store.Fingerprint())
+			errCh <- httpServer.ServeTLS(ln, "", "")
+			return
+		}
+		slog.Info("remote-workspace-mcp gateway started", "tls", false, "listen", cfg.Server.Listen, "path", cfg.Server.MCPPath, "token_fingerprint", store.Fingerprint())
+		errCh <- httpServer.Serve(ln)
 	}()
 
 	signals := make(chan os.Signal, 1)

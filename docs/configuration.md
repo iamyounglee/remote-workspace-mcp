@@ -10,6 +10,7 @@ server:
   listen: 0.0.0.0:8080
   mcp_path: /mcp
   state_dir: ./state
+  trusted_proxies: []
 
 auth:
   token_file: ./state/access-token
@@ -56,9 +57,6 @@ logging:
   max_size_mb: 20
   max_files: 5
   audit_enabled: true
-  log_file_content: false
-  log_command_output: false
-  redact_authorization: true
 ```
 
 YAML 使用严格字段检查。字段拼写错误、未知字段或多个 YAML 文档会导致配置加载失败。
@@ -73,6 +71,9 @@ YAML 使用严格字段检查。字段拼写错误、未知字段或多个 YAML 
 | `server.listen` | string | `0.0.0.0:8080` | HTTP 监听地址。`0.0.0.0` 表示监听所有网卡。 |
 | `server.mcp_path` | string | `/mcp` | MCP Streamable HTTP 路径，必须以 `/` 开头。 |
 | `server.state_dir` | string | `./state` | 服务状态目录配置。当前 Token 实际位置由 `auth.token_file` 决定；修改状态目录时建议同时修改 Token 路径。 |
+| `server.trusted_proxies` | string[] | `[]` | 受信任代理的 IP 或 CIDR 列表。仅当请求来自这些来源时，审计才采信 `X-Forwarded-For` 中的客户端 IP；留空表示不信任任何代理，审计一律使用对端 IP，可防止调用方伪造来源 IP 污染审计归因。 |
+| `server.tls.cert_file` | string | `""` | 用户自备的 TLS 证书文件路径。与 `server.tls.key_file` 必须同时配置；配置后服务仅以 TLS 监听，不再提供明文端口，且证书支持定时热加载（无需重启进程）。留空表示不启用 TLS。 |
+| `server.tls.key_file` | string | `""` | 用户自备的 TLS 私钥文件路径，与 `server.tls.cert_file` 配对。mTLS（客户端证书校验）不在本次范围内。 |
 
 生产环境可根据网络策略将 `listen` 改为具体内网 IP。只允许本机反向代理访问时可以使用 `127.0.0.1:8080`。
 
@@ -171,9 +172,6 @@ bash:
 | `logging.file` | string | `./logs/remote-workspace-mcpd.log` | `slog` 日志文件。日志只写入该文件，不写标准输出。 |
 | `logging.max_size_mb` | integer | `20` | 单个日志文件触发轮转的大小，单位 MB。小于 1 时使用默认值 20。 |
 | `logging.max_files` | integer | `5` | 保留的日志文件总数，包含活动文件。默认最多 5 个文件，即活动文件及历史文件 `.1` 到 `.4`。 |
-| `logging.audit_enabled` | boolean | `true` | 预留字段，当前尚未实现完整工具审计日志。 |
-| `logging.log_file_content` | boolean | `false` | 预留字段，当前不会记录文件内容。 |
-| `logging.log_command_output` | boolean | `false` | 预留字段，当前不会记录命令输出。 |
-| `logging.redact_authorization` | boolean | `true` | 预留字段；当前实现本身不会记录 Authorization Header。 |
+| `logging.audit_enabled` | boolean | `true` | 控制是否将工具调用与传输接口的审计记录写入日志文件。启用后，每次受鉴权请求（成功或失败）都会产出 `audit=true` 的审计条目，含操作类型、目标、结果、耗时、客户端 IP 与失败原因。 |
 
-`logging.level`、`logging.file`、`logging.max_size_mb` 和 `logging.max_files` 已接入运行时。日志达到 `max_size_mb` 后轮转：现有历史文件依次后移，活动文件变为 `.1`；`max_files: 5` 时最多保留活动文件、`.1`、`.2`、`.3` 和 `.4`。审计相关开关虽已纳入 YAML 严格结构，但目前不改变运行时行为，不要依赖它们满足合规审计要求。
+`logging.level`、`logging.file`、`logging.max_size_mb` 和 `logging.max_files` 已接入运行时，`logging.audit_enabled` 也已生效。日志达到 `max_size_mb` 后轮转：现有历史文件依次后移，活动文件变为 `.1`；`max_files: 5` 时最多保留活动文件、`.1`、`.2`、`.3` 和 `.4`。
